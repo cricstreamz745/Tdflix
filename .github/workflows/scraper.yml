@@ -22,9 +22,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        # Remove cache line or set to false if no requirements.txt
-        cache: 'pip'
-        cache-dependency-path: '**/requirements.txt'  # This will be ignored if file doesn't exist
+        # NO CACHE PARAMETERS AT ALL
         
     - name: Install dependencies
       run: |
@@ -34,55 +32,17 @@ jobs:
     - name: Run TDXFlix Scraper
       run: |
         python tdxflix_scraper.py
-        echo "SCRAPE_TIME=$(date +'%Y%m%d_%H%M%S')" >> $GITHUB_ENV
         
-    - name: Check and commit changes
+    - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        
-        # Check if file exists and has changes
-        if [ -f "tdxflix.json" ]; then
-          git add tdxflix.json
-          
-          # Only commit if there are changes
-          if ! git diff --quiet HEAD -- tdxflix.json; then
-            git commit -m "Auto-update tdxflix.json [$(date +'%Y-%m-%d %H:%M:%S')]"
-            git push
-            echo "✅ Changes committed and pushed"
-          else
-            echo "ℹ️ No changes to commit"
-          fi
-        else
-          echo "❌ tdxflix.json not found!"
-          exit 1
-        fi
+        git add tdxflix.json
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update tdxflix.json" && git push)
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tdxflix-data-${{ env.SCRAPE_TIME }}
+        name: tdxflix-data
         path: tdxflix.json
         retention-days: 7
-        if-no-files-found: warn
-        
-    - name: Create summary
-      if: always()
-      run: |
-        echo "## 📊 Scrape Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -f "tdxflix.json" ]; then
-          # Try to extract video count using grep if jq not available
-          VIDEO_COUNT=$(grep -o '"total_videos": [0-9]*' tdxflix.json | head -1 | grep -o '[0-9]*')
-          if [ -z "$VIDEO_COUNT" ]; then
-            VIDEO_COUNT="Unknown"
-          fi
-          echo "| Total Videos | $VIDEO_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Scrape Time | $(date) |" >> $GITHUB_STEP_SUMMARY
-          echo "| File Size | $(du -h tdxflix.json | cut -f1) |" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "| Status | Failed - No file generated |" >> $GITHUB_STEP_SUMMARY
-        fi
