@@ -12,14 +12,19 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     
+    permissions:
+      contents: write  # Needed to push changes
+      actions: read
+      
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'
+        cache: 'pip'  # Cache dependencies for faster runs
         
     - name: Install dependencies
       run: |
@@ -29,6 +34,7 @@ jobs:
     - name: Run TDXFlix Scraper
       run: |
         python tdxflix_scraper.py
+        echo "SCRAPE_TIME=$(date +'%Y%m%d_%H%M%S')" >> $GITHUB_ENV
         
     - name: Check and commit changes
       run: |
@@ -38,15 +44,39 @@ jobs:
         # Check if file exists and has changes
         if [ -f "tdxflix.json" ]; then
           git add tdxflix.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update tdxflix.json [$(date +'%Y-%m-%d %H:%M:%S')]"
-          git push
+          
+          # Only commit if there are changes
+          if ! git diff --quiet HEAD -- tdxflix.json; then
+            git commit -m "Auto-update tdxflix.json [$(date +'%Y-%m-%d %H:%M:%S')]"
+            git push
+            echo "✅ Changes committed and pushed"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
         else
-          echo "tdxflix.json not found!"
+          echo "❌ tdxflix.json not found!"
           exit 1
         fi
         
     - name: Upload artifact (optional)
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # Updated to v4
       with:
-        name: tdxflix-data
+        name: tdxflix-data-${{ env.SCRAPE_TIME }}
         path: tdxflix.json
+        retention-days: 30  # Keep artifacts for 30 days
+        if-no-files-found: error
+        
+    - name: Create summary
+      run: |
+        echo "## 📊 Scrape Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "tdxflix.json" ]; then
+          TOTAL_VIDEOS=$(jq '.metadata.total_videos' tdxflix.json)
+          echo "| Total Videos | $TOTAL_VIDEOS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scrape Time | $(date) |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Status | Failed |" >> $GITHUB_STEP_SUMMARY
+        fi
