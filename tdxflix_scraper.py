@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 TDXFlix Complete Scraper - Single File Version
-Scrapes videos, images, metadata, and saves to tdxflix.json
+Scrapes videos, images, metadata, player URLs, and saves to tdxflix.json
 """
 
 import requests
@@ -9,10 +9,11 @@ from bs4 import BeautifulSoup
 import json
 import os
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs, unquote
 from datetime import datetime
 from collections import Counter
 import re
+import base64
 
 class TDXFlixScraper:
     def __init__(self, base_url="https://tdxflix.art/"):
@@ -22,6 +23,7 @@ class TDXFlixScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://tdxflix.art/'
         })
         self.all_videos = []
         self.output_file = "tdxflix.json"
@@ -35,6 +37,110 @@ class TDXFlixScraper:
             return response.text
         except requests.exceptions.RequestException as e:
             print(f"✗ Error fetching {url}: {e}")
+            return None
+    
+    def extract_player_url(self, video_page_url):
+        """Extract iframe player URL from video page"""
+        try:
+            html = self.fetch_page(video_page_url)
+            if not html:
+                return None
+            
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for iframe in the page
+            iframe = soup.find('iframe')
+            if iframe and iframe.get('src'):
+                player_url = iframe['src']
+                
+                # Handle relative URLs
+                if player_url.startswith('/'):
+                    player_url = urljoin(self.base_url, player_url)
+                
+                return player_url
+            
+            # Also check for video players in divs with specific classes
+            player_div = soup.find('div', class_=lambda x: x and 'player' in str(x).lower())
+            if player_div:
+                # Look for data attributes that might contain video source
+                for attr in ['data-src', 'data-player', 'data-video']:
+                    if player_div.get(attr):
+                        return player_div[attr]
+            
+            return None
+            
+        except Exception as e:
+            print(f"✗ Error extracting player URL from {video_page_url}: {e}")
+            return None
+    
+    def extract_video_source_from_player(self, player_url):
+        """Extract actual video source from player page"""
+        try:
+            if not player_url:
+                return None
+            
+            print(f"  Fetching player: {player_url[:50]}...")
+            html = self.fetch_page(player_url)
+            if not html:
+                return None
+            
+            # Check if it's the encoded player URL format
+            if 'player-x.php' in player_url:
+                # Extract the q parameter
+                parsed = urlparse(player_url)
+                query_params = parse_qs(parsed.query)
+                
+                if 'q' in query_params:
+                    encoded_data = query_params['q'][0]
+                    try:
+                        # URL decode then base64 decode
+                        url_decoded = unquote(encoded_data)
+                        # The data might be base64 encoded
+                        decoded_bytes = base64.b64decode(url_decoded + '=' * (4 - len(url_decoded) % 4))
+                        decoded_str = decoded_bytes.decode('utf-8')
+                        
+                        # Extract video source from decoded string
+                        # Look for src attribute in video/source tags
+                        src_match = re.search(r'src=(["\'])(.*?)\1', decoded_str)
+                        if src_match:
+                            return src_match.group(2)
+                    except:
+                        pass
+            
+            # Parse HTML response for video source
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for video tag
+            video = soup.find('video')
+            if video:
+                # Check for src attribute
+                if video.get('src'):
+                    return video['src']
+                
+                # Check for source tags
+                source = video.find('source')
+                if source and source.get('src'):
+                    return source['src']
+            
+            # Look for source tags anywhere
+            source = soup.find('source')
+            if source and source.get('src'):
+                return source['src']
+            
+            # Look for script tags containing video config
+            scripts = soup.find_all('script')
+            for script in scripts:
+                if script.string:
+                    # Look for video URLs in script content
+                    url_pattern = r'(https?://[^\s"\']+\.(?:mp4|m3u8|webm|ogg)[^\s"\']*)'
+                    urls = re.findall(url_pattern, script.string)
+                    if urls:
+                        return urls[0]
+            
+            return None
+            
+        except Exception as e:
+            print(f"✗ Error extracting video source: {e}")
             return None
     
     def parse_video_article(self, article):
@@ -125,7 +231,7 @@ class TDXFlixScraper:
         return self.all_videos
     
     def scrape_video_page(self, video_url):
-        """Scrape individual video page for more details"""
+        """Scrape individual video page for more details including player"""
         html = self.fetch_page(video_url)
         if not html:
             return None
@@ -152,6 +258,16 @@ class TDXFlixScraper:
                 elif meta.get('name') == 'description':
                     details['meta_description'] = meta.get('content', '')
             
+            # Extract player URL
+            player_url = self.extract_player_url(video_url)
+            if player_url:
+                details['player_url'] = player_url
+                
+                # Try to extract actual video source from player
+                video_source = self.extract_video_source_from_player(player_url)
+                if video_source:
+                    details['video_source'] = video_source
+            
         except Exception as e:
             print(f"Error scraping video page: {e}")
         
@@ -163,11 +279,11 @@ class TDXFlixScraper:
         
         for i, video in enumerate(self.all_videos[:max_videos]):
             if video.get('url'):
-                print(f"  Processing video {i+1}/{max_videos}")
+                print(f"  Processing video {i+1}/{max_videos}: {video.get('title', '')[:30]}...")
                 details = self.scrape_video_page(video['url'])
                 if details:
                     video.update(details)
-                time.sleep(1)
+                time.sleep(2)  # Longer delay for player page fetching
     
     def generate_seo_analysis(self):
         """Generate SEO analysis and add to JSON"""
@@ -204,6 +320,8 @@ class TDXFlixScraper:
             'videos_with_duration': sum(1 for v in self.all_videos if v.get('duration')),
             'videos_with_tags': sum(1 for v in self.all_videos if v.get('tags')),
             'videos_with_hd': sum(1 for v in self.all_videos if v.get('hd')),
+            'videos_with_player': sum(1 for v in self.all_videos if v.get('player_url')),
+            'videos_with_source': sum(1 for v in self.all_videos if v.get('video_source')),
             'top_tags': dict(tag_counter.most_common(20)),
             'top_keywords': dict(keyword_counter.most_common(30)),
             'scrape_date': datetime.now().isoformat(),
@@ -219,7 +337,7 @@ class TDXFlixScraper:
                 'site': self.base_url,
                 'total_videos': len(self.all_videos),
                 'scraped_at': datetime.now().isoformat(),
-                'version': '1.0'
+                'version': '2.0'  # Updated version
             },
             'seo_analysis': self.generate_seo_analysis(),
             'videos': self.all_videos
@@ -230,6 +348,8 @@ class TDXFlixScraper:
         
         print(f"\n✅ Data saved to {self.output_file}")
         print(f"   Total videos: {len(self.all_videos)}")
+        print(f"   Videos with player URLs: {sum(1 for v in self.all_videos if v.get('player_url'))}")
+        print(f"   Videos with source URLs: {sum(1 for v in self.all_videos if v.get('video_source'))}")
         print(f"   File size: {os.path.getsize(self.output_file)} bytes")
         
         return final_data
@@ -240,9 +360,15 @@ class TDXFlixScraper:
         print("📊 SCRAPE SUMMARY")
         print("="*50)
         print(f"Total Videos: {len(self.all_videos)}")
+        print(f"Videos with Player URLs: {sum(1 for v in self.all_videos if v.get('player_url'))}")
+        print(f"Videos with Source URLs: {sum(1 for v in self.all_videos if v.get('video_source'))}")
         
         if self.all_videos:
-            print(f"First video: {self.all_videos[0].get('title', 'N/A')[:50]}")
+            print(f"\nFirst video: {self.all_videos[0].get('title', 'N/A')[:50]}")
+            if self.all_videos[0].get('player_url'):
+                print(f"Player URL: {self.all_videos[0].get('player_url', 'N/A')[:50]}...")
+            if self.all_videos[0].get('video_source'):
+                print(f"Source URL: {self.all_videos[0].get('video_source', 'N/A')[:50]}...")
             print(f"Sample tags: {self.all_videos[0].get('tags', [])[:5]}")
             
             # Count unique tags
@@ -264,8 +390,8 @@ def main():
     videos = scraper.scrape_main_page(max_pages=3)  # Adjust pages as needed
     
     if videos:
-        # Enhance with video page details (optional)
-        scraper.enhance_with_video_details(max_videos=5)
+        # Enhance with video page details including player URLs
+        scraper.enhance_with_video_details(max_videos=10)  # Get player for first 10 videos
         
         # Print summary
         scraper.print_summary()
