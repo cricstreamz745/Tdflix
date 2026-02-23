@@ -385,7 +385,8 @@ class TDXFlixScraper:
         print(f"Total Videos: {len(self.all_videos)}")
         print(f"Videos with Player URLs: {sum(1 for v in self.all_videos if v.get('player_url'))}")
         print(f"Videos with Source URLs: {sum(1 for v in self.all_videos if v.get('video_source'))}")
-        print(f"Success Rate: {sum(1 for v in self.all_videos if v.get('player_url'))/len(self.all_videos)*100:.1f}%")
+        if len(self.all_videos) > 0:
+            print(f"Success Rate: {sum(1 for v in self.all_videos if v.get('player_url'))/len(self.all_videos)*100:.1f}%")
         
         if self.all_videos:
             print(f"\n📌 First video sample:")
@@ -460,4 +461,6 @@ def main():
     
     print("\n✨ Scraping completed successfully!")
 
-if __name__ == "__mai
+# THIS LINE WAS THE PROBLEM - FIXED NOW
+if __name__ == "__main__":
+    main()
