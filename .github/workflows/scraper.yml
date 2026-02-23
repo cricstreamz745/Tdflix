@@ -2,9 +2,8 @@ name: TDXFlix Auto Scraper
 
 on:
   schedule:
-    # Runs every 6 hours (adjust as needed)
     - cron: '0 */6 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
   push:
     branches: [ main ]
 
@@ -13,8 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write  # Needed to push changes
-      actions: read
+      contents: write
       
     steps:
     - name: Checkout repository
@@ -24,7 +22,9 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'  # Cache dependencies for faster runs
+        # Remove cache line or set to false if no requirements.txt
+        cache: 'pip'
+        cache-dependency-path: '**/requirements.txt'  # This will be ignored if file doesn't exist
         
     - name: Install dependencies
       run: |
@@ -58,15 +58,16 @@ jobs:
           exit 1
         fi
         
-    - name: Upload artifact (optional)
-      uses: actions/upload-artifact@v4  # Updated to v4
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
         name: tdxflix-data-${{ env.SCRAPE_TIME }}
         path: tdxflix.json
-        retention-days: 30  # Keep artifacts for 30 days
-        if-no-files-found: error
+        retention-days: 7
+        if-no-files-found: warn
         
     - name: Create summary
+      if: always()
       run: |
         echo "## 📊 Scrape Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -74,9 +75,14 @@ jobs:
         echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
         
         if [ -f "tdxflix.json" ]; then
-          TOTAL_VIDEOS=$(jq '.metadata.total_videos' tdxflix.json)
-          echo "| Total Videos | $TOTAL_VIDEOS |" >> $GITHUB_STEP_SUMMARY
+          # Try to extract video count using grep if jq not available
+          VIDEO_COUNT=$(grep -o '"total_videos": [0-9]*' tdxflix.json | head -1 | grep -o '[0-9]*')
+          if [ -z "$VIDEO_COUNT" ]; then
+            VIDEO_COUNT="Unknown"
+          fi
+          echo "| Total Videos | $VIDEO_COUNT |" >> $GITHUB_STEP_SUMMARY
           echo "| Scrape Time | $(date) |" >> $GITHUB_STEP_SUMMARY
+          echo "| File Size | $(du -h tdxflix.json | cut -f1) |" >> $GITHUB_STEP_SUMMARY
         else
-          echo "| Status | Failed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Failed - No file generated |" >> $GITHUB_STEP_SUMMARY
         fi
