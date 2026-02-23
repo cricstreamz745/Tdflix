@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-TDXFlix Complete Scraper - Single File Version
-Scrapes videos, images, metadata, player URLs, and saves to tdxflix.json
+TDXFlix Complete Scraper - Fetches player URLs for ALL videos
 """
 
 import requests
@@ -59,14 +58,6 @@ class TDXFlixScraper:
                 
                 return player_url
             
-            # Also check for video players in divs with specific classes
-            player_div = soup.find('div', class_=lambda x: x and 'player' in str(x).lower())
-            if player_div:
-                # Look for data attributes that might contain video source
-                for attr in ['data-src', 'data-player', 'data-video']:
-                    if player_div.get(attr):
-                        return player_div[attr]
-            
             return None
             
         except Exception as e:
@@ -95,17 +86,16 @@ class TDXFlixScraper:
                     try:
                         # URL decode then base64 decode
                         url_decoded = unquote(encoded_data)
-                        # The data might be base64 encoded
+                        # Add padding if needed
                         decoded_bytes = base64.b64decode(url_decoded + '=' * (4 - len(url_decoded) % 4))
                         decoded_str = decoded_bytes.decode('utf-8')
                         
                         # Extract video source from decoded string
-                        # Look for src attribute in video/source tags
                         src_match = re.search(r'src=(["\'])(.*?)\1', decoded_str)
                         if src_match:
                             return src_match.group(2)
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"    Decoding error: {e}")
             
             # Parse HTML response for video source
             soup = BeautifulSoup(html, 'html.parser')
@@ -113,11 +103,8 @@ class TDXFlixScraper:
             # Look for video tag
             video = soup.find('video')
             if video:
-                # Check for src attribute
                 if video.get('src'):
                     return video['src']
-                
-                # Check for source tags
                 source = video.find('source')
                 if source and source.get('src'):
                     return source['src']
@@ -131,7 +118,6 @@ class TDXFlixScraper:
             scripts = soup.find_all('script')
             for script in scripts:
                 if script.string:
-                    # Look for video URLs in script content
                     url_pattern = r'(https?://[^\s"\']+\.(?:mp4|m3u8|webm|ogg)[^\s"\']*)'
                     urls = re.findall(url_pattern, script.string)
                     if urls:
@@ -224,9 +210,9 @@ class TDXFlixScraper:
                 video_data = self.parse_video_article(article)
                 if video_data and video_data.get('url'):
                     self.all_videos.append(video_data)
-                time.sleep(0.5)  # Be respectful to server
+                time.sleep(0.5)
             
-            time.sleep(2)  # Delay between pages
+            time.sleep(2)
         
         return self.all_videos
     
@@ -273,17 +259,54 @@ class TDXFlixScraper:
         
         return details
     
-    def enhance_with_video_details(self, max_videos=10):
-        """Enhance first N videos with individual page data"""
-        print(f"\n🔍 Enhancing {min(max_videos, len(self.all_videos))} videos with page details...")
+    def enhance_all_videos(self, start_from=0, delay=2):
+        """
+        Enhance ALL videos with player URLs and video sources
+        Args:
+            start_from: Index to start from (useful for resuming)
+            delay: Delay between requests in seconds
+        """
+        total = len(self.all_videos)
+        print(f"\n🔍 Enhancing ALL {total} videos with page details...")
+        print(f"   This will take approximately {total * delay / 60:.1f} minutes")
         
-        for i, video in enumerate(self.all_videos[:max_videos]):
+        successful = 0
+        failed = 0
+        
+        for i, video in enumerate(self.all_videos[start_from:], start=start_from):
             if video.get('url'):
-                print(f"  Processing video {i+1}/{max_videos}: {video.get('title', '')[:30]}...")
-                details = self.scrape_video_page(video['url'])
-                if details:
-                    video.update(details)
-                time.sleep(2)  # Longer delay for player page fetching
+                print(f"\n  [{i+1}/{total}] Processing: {video.get('title', '')[:50]}...")
+                
+                try:
+                    details = self.scrape_video_page(video['url'])
+                    if details:
+                        video.update(details)
+                        if details.get('player_url'):
+                            successful += 1
+                            print(f"    ✅ Player URL found")
+                        if details.get('video_source'):
+                            print(f"    ✅ Video source found")
+                    else:
+                        failed += 1
+                        print(f"    ❌ No details retrieved")
+                    
+                except Exception as e:
+                    failed += 1
+                    print(f"    ❌ Error: {e}")
+                
+                # Progress indicator
+                if (i + 1) % 10 == 0:
+                    print(f"\n📊 Progress: {i+1}/{total} | Successful: {successful} | Failed: {failed}")
+                
+                # Be respectful to the server
+                time.sleep(delay)
+        
+        print(f"\n✅ Enhancement complete!")
+        print(f"   Total processed: {total}")
+        print(f"   Successful: {successful}")
+        print(f"   Failed: {failed}")
+        
+        return successful, failed
     
     def generate_seo_analysis(self):
         """Generate SEO analysis and add to JSON"""
@@ -337,7 +360,7 @@ class TDXFlixScraper:
                 'site': self.base_url,
                 'total_videos': len(self.all_videos),
                 'scraped_at': datetime.now().isoformat(),
-                'version': '2.0'  # Updated version
+                'version': '2.0'
             },
             'seo_analysis': self.generate_seo_analysis(),
             'videos': self.all_videos
@@ -356,52 +379,85 @@ class TDXFlixScraper:
     
     def print_summary(self):
         """Print summary of scraped data"""
-        print("\n" + "="*50)
+        print("\n" + "="*60)
         print("📊 SCRAPE SUMMARY")
-        print("="*50)
+        print("="*60)
         print(f"Total Videos: {len(self.all_videos)}")
         print(f"Videos with Player URLs: {sum(1 for v in self.all_videos if v.get('player_url'))}")
         print(f"Videos with Source URLs: {sum(1 for v in self.all_videos if v.get('video_source'))}")
+        print(f"Success Rate: {sum(1 for v in self.all_videos if v.get('player_url'))/len(self.all_videos)*100:.1f}%")
         
         if self.all_videos:
-            print(f"\nFirst video: {self.all_videos[0].get('title', 'N/A')[:50]}")
+            print(f"\n📌 First video sample:")
+            print(f"  Title: {self.all_videos[0].get('title', 'N/A')[:50]}")
             if self.all_videos[0].get('player_url'):
-                print(f"Player URL: {self.all_videos[0].get('player_url', 'N/A')[:50]}...")
+                print(f"  Player: {self.all_videos[0].get('player_url', 'N/A')[:50]}...")
             if self.all_videos[0].get('video_source'):
-                print(f"Source URL: {self.all_videos[0].get('video_source', 'N/A')[:50]}...")
-            print(f"Sample tags: {self.all_videos[0].get('tags', [])[:5]}")
-            
-            # Count unique tags
-            all_tags = []
-            for v in self.all_videos:
-                all_tags.extend(v.get('tags', []))
-            print(f"Unique tags: {len(set(all_tags))}")
+                print(f"  Source: {self.all_videos[0].get('video_source', 'N/A')[:50]}...")
         
-        print("="*50)
+        print("="*60)
 
 def main():
     print("🚀 TDXFlix Scraper Starting...")
-    print("="*50)
+    print("="*60)
     
     # Initialize scraper
     scraper = TDXFlixScraper()
     
-    # Scrape main pages
-    videos = scraper.scrape_main_page(max_pages=3)  # Adjust pages as needed
+    # Step 1: Scrape main pages
+    print("\n📥 STEP 1: Scraping video list...")
+    videos = scraper.scrape_main_page(max_pages=3)
     
-    if videos:
-        # Enhance with video page details including player URLs
-        scraper.enhance_with_video_details(max_videos=10)  # Get player for first 10 videos
-        
-        # Print summary
-        scraper.print_summary()
-        
-        # Save to tdxflix.json
-        scraper.save_to_json()
-        
-        print("\n✨ Scraping completed successfully!")
-    else:
+    if not videos:
         print("❌ No videos scraped")
+        return
+    
+    print(f"\n✅ Found {len(videos)} videos total")
+    
+    # Step 2: Ask user if they want to fetch all player URLs
+    print("\n" + "="*60)
+    print("🎥 STEP 2: Fetch player URLs and video sources")
+    print("="*60)
+    print(f"Total videos to process: {len(videos)}")
+    print(f"Estimated time: ~{len(videos) * 2 / 60:.1f} minutes")
+    print("\nOptions:")
+    print("1. Process ALL videos (full scrape)")
+    print("2. Process only first 10 videos (quick test)")
+    print("3. Resume from a specific index")
+    
+    choice = input("\nEnter your choice (1/2/3): ").strip()
+    
+    if choice == "1":
+        # Process ALL videos
+        successful, failed = scraper.enhance_all_videos(start_from=0, delay=2)
+        
+    elif choice == "2":
+        # Quick test - first 10 videos
+        print("\n🔍 Quick test: Processing first 10 videos...")
+        for i, video in enumerate(scraper.all_videos[:10]):
+            if video.get('url'):
+                print(f"\n  [{i+1}/10] Processing: {video.get('title', '')[:30]}...")
+                details = scraper.scrape_video_page(video['url'])
+                if details:
+                    video.update(details)
+                time.sleep(2)
+                
+    elif choice == "3":
+        # Resume from index
+        try:
+            start_idx = int(input("Enter starting index (0-based): "))
+            successful, failed = scraper.enhance_all_videos(start_from=start_idx, delay=2)
+        except ValueError:
+            print("❌ Invalid index, processing all videos")
+            successful, failed = scraper.enhance_all_videos(start_from=0, delay=2)
+    else:
+        print("❌ Invalid choice, processing all videos")
+        successful, failed = scraper.enhance_all_videos(start_from=0, delay=2)
+    
+    # Step 3: Print summary and save
+    scraper.print_summary()
+    scraper.save_to_json()
+    
+    print("\n✨ Scraping completed successfully!")
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__mai
