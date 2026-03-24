@@ -16,14 +16,14 @@ import re
 import base64
 
 class TDXFlixScraper:
-    def __init__(self, base_url="https://tdxflix.mba/"):
+    def __init__(self, base_url="https://tdxflix.art/"):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://tdxflix.mba/'
+            'Referer': 'https://tdxflix.art/'
         })
         self.all_videos = []
         self.output_file = "tdxflix.json"
